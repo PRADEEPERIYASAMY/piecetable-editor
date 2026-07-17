@@ -1,0 +1,6 @@
+editor
+*.o
+*.out
+*.log
+tests/run_tests
+.DS_Store

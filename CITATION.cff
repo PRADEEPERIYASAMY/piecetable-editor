@@ -1,0 +1,28 @@
+cff-version: 1.2.0
+message: "If you use or reference this project in academic or professional work, please cite it using the metadata below."
+title: "PieceTable Editor — A High-Performance C++ Terminal Editor"
+abstract: >
+  A fully functional terminal text editor built from scratch in modern C++17.
+  Demonstrates production-grade systems engineering across text storage (Piece Table),
+  incremental line indexing, the Command pattern for undo/redo, Thompson NFA regex,
+  stateless syntax highlighting, LCS-based diff, and lock-minimised background autosave.
+authors:
+  - family-names: "Periyasamy"
+    given-names: "Pradeep"
+    orcid: ""
+    affiliation: ""
+repository-code: "https://github.com/PRADEEPERIYASAMY/piecetable-editor"
+license: MIT
+version: "1.0.0"
+date-released: "2025-01-01"
+keywords:
+  - "c++"
+  - "text editor"
+  - "piece table"
+  - "gap buffer"
+  - "thompson nfa"
+  - "undo redo"
+  - "terminal"
+  - "systems programming"
+  - "data structures"
+  - "algorithms"

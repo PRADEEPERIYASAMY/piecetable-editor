@@ -60,48 +60,6 @@ Every component was engineered deliberately: algorithmic trade-offs are document
 | **Flicker-free rendering** | Entire frame accumulated in a `FrameBuffer` and flushed in a single `write()` syscall |
 | **No external deps** | Zero dependencies beyond the C++17 standard library and POSIX |
 
-**Project overview — all subsystems at a glance:**
-
-```mermaid
-flowchart LR
-    subgraph storage["Text Storage"]
-        PT["PieceTable\noriginalText + appendedText\nPiece list + coalesce"]
-        GB["GapBuffer\nContiguous array\nMovable gap · 4 KB default"]
-    end
-    subgraph document["Document Layer"]
-        TD["TextDocument\nlineStarts_ vector\nIncremental index\nOffset-based range API"]
-    end
-    subgraph editing["Editing"]
-        EC["EditCommand\nInsert · Delete · Merge · Newline"]
-        UR["UndoRedoStack\nundo stack · redo stack"]
-    end
-    subgraph search["Search"]
-        LS["Literal incremental search"]
-        RE["RegexEngine\nThompson NFA\nEpsilon-closure simulation"]
-    end
-    subgraph highlight["Syntax Highlighting"]
-        SH["SyntaxHighlighter\nC/C++ · Python\nStateless per-line API"]
-    end
-    subgraph rendering["Rendering"]
-        SR["ScreenRenderer\nFrameBuffer\nSingle write syscall"]
-        TN["Terminal\nPOSIX raw mode · SIGWINCH"]
-    end
-    subgraph selection["Selection and Clipboard"]
-        SEL["Selection\nanchor · active · normalized"]
-        CB["Clipboard\nIn-process single slot"]
-    end
-    subgraph history["Version History"]
-        VH["VersionHistory\nFull-text snapshots · savedAt"]
-        DE["DiffEngine\nLCS dynamic program"]
-    end
-    subgraph concurrency["Concurrency"]
-        AW["AutosaveWorker\nstd::thread\ncondition_variable\natomic dirty flag"]
-    end
-    subgraph testing["Testing"]
-        TS["50 unit tests\n4-scenario benchmark\nASan + UBSan"]
-    end
-```
-
 ---
 
 ## Project Structure
@@ -179,61 +137,72 @@ The three top-level boundaries are enforced by the **type system**, not conventi
 - `ScreenRenderer::render` takes `const TextEditor&` — the compiler rejects any write.
 - `InputHandler` has no `FrameBuffer` in scope — it structurally cannot emit output.
 
+### Diagram 1 — Component Architecture
+
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#e0f2fe', 'primaryBorderColor': '#0284c7', 'primaryTextColor': '#0c4a6e', 'secondaryColor': '#f0fdf4', 'tertiaryColor': '#fef9c3', 'lineColor': '#475569', 'fontSize': '14px'}}}%%
 flowchart TB
-    subgraph entry["main.cpp — Entry Point"]
-        M1["Terminal::enableRawMode()"]
-        M2["signal(SIGWINCH, handler)"]
-        M3["editor.openFile(argv[1])"]
-        M4["editor.run()"]
+    classDef entry    fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef core     fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e
+    classDef render   fill:#f0fdf4,stroke:#16a34a,color:#14532d
+    classDef input    fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+    classDef posix    fill:#fce7f3,stroke:#db2777,color:#831843
+    classDef state    fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef conc     fill:#ffedd5,stroke:#ea580c,color:#7c2d12
+
+    subgraph entry_box["main.cpp — Entry Point"]
+        M1["enableRawMode()"]:::entry
+        M2["SIGWINCH handler"]:::entry
+        M3["openFile(argv)"]:::entry
+        M4["editor.run()"]:::entry
     end
 
-    subgraph editor["TextEditor — Orchestrator"]
-        direction TB
-        subgraph state["Owned State"]
-            TD["TextDocument\nPieceTable + lineStarts_"]
-            UR["UndoRedoStack\nundo / redo vectors"]
-            SEL["Selection\nanchor + active"]
-            CB["Clipboard\nsingle-slot string"]
-            VH["VersionHistory\nfull-text snapshots"]
+    subgraph editor_box["TextEditor — Orchestrator"]
+        subgraph state_box["Owned State"]
+            TD["TextDocument\nPieceTable + lineStarts_"]:::state
+            UR["UndoRedoStack\nundo / redo stacks"]:::state
+            SEL["Selection\nanchor + active"]:::state
+            CB["Clipboard\nsingle-slot string"]:::state
+            VH["VersionHistory\nfull-text snapshots"]:::state
         end
-        subgraph concurrency["Concurrency"]
-            AW["AutosaveWorker\nstd::thread\ncondition_variable\natomic dirty flag"]
-            MX["documentMutex_\nstd::mutex"]
+        subgraph conc_box["Concurrency"]
+            AW["AutosaveWorker\nstd::thread + condvar\natomic dirty flag"]:::conc
+            MX["documentMutex_"]:::conc
         end
     end
 
-    subgraph rendering["Read-only — const TextEditor&"]
-        SR["ScreenRenderer\nnamespace"]
-        FB["FrameBuffer\nstd::string accumulator"]
-        SH["SyntaxHighlighter\nstateless tokenizer"]
+    subgraph render_box["Read-only — const TextEditor&"]
+        SR["ScreenRenderer"]:::render
+        FB["FrameBuffer\nstd::string accumulator"]:::render
+        SH["SyntaxHighlighter\nstateless tokenizer"]:::render
     end
 
-    subgraph inputpath["Write-path — TextEditor&"]
-        IH["InputHandler\nnamespace"]
+    subgraph input_box["Write-path — TextEditor&"]
+        IH["InputHandler"]:::input
     end
 
-    subgraph posix["OS / POSIX"]
-        T["Terminal namespace\nraw mode · ioctl · SIGWINCH"]
-        DISK["Filesystem\n.bak autosave"]
+    subgraph posix_box["OS / POSIX"]
+        T["Terminal\nraw mode · ioctl · SIGWINCH"]:::posix
+        DISK["Filesystem\n.bak autosave"]:::posix
     end
 
     M1 --> M2 --> M3 --> M4
-    M4 --> editor
-    editor -->|"const TextEditor&"| SR
+    M4 --> editor_box
+    editor_box -->|"const TextEditor&"| SR
     SR --> SH
     SR --> FB
     FB -->|"single write() syscall"| T
-    IH -->|"TextEditor& method calls"| editor
+    IH -->|"TextEditor& calls"| editor_box
     T -->|"raw bytes"| IH
     AW -->|"lock · snapshot · unlock"| MX
     AW -->|"write after unlock"| DISK
     MX --- TD
 ```
 
-**Full class hierarchy and relationships:**
+### Diagram 2 — Full Class Hierarchy
 
 ```mermaid
+%%{init: {'theme': 'default'}}%%
 classDiagram
     direction TB
 
@@ -251,10 +220,7 @@ classDiagram
         +insert(position, text)
         +erase(position, length)
         +text() string
-        +size() size_t
         +charAt(index) char
-        +substring(start, len) string
-        -appendAndTrackPiece(text) Piece
         -coalesceAdjacentPieces()
     }
 
@@ -270,11 +236,8 @@ classDiagram
         -size_t gapEnd_
         +insert(position, text)
         +erase(position, length)
-        +text() string
-        +size() size_t
         +charAt(index) char
         -moveGapTo(pos)
-        -ensureGap(needed)
     }
 
     class TextDocument {
@@ -282,17 +245,10 @@ classDiagram
         -size_t[] lineStarts_
         +lineCount() int
         +lineText(row) string
-        +lineLength(row) int
-        +fullText() string
         +insertChar(row, col, c)
-        +deleteChar(row, col)
         +insertNewline(row, splitCol)
-        +mergeWithNextLine(row)
         +toOffset(row, col) size_t
         +textInRange(start, end) string
-        +eraseRange(start, end)
-        +insertAt(offset, text)
-        +replaceAllText(text)
     }
 
     class EditCommand {
@@ -312,21 +268,18 @@ classDiagram
     class DeleteCharCommand {
         -int row_, col_
         -char deletedCharacter_
-        -CursorPos before_, after_
         +undo()
         +redo()
     }
 
     class MergeLinesCommand {
         -int row_, previousLineLength_
-        -CursorPos before_, after_
         +undo()
         +redo()
     }
 
     class InsertNewlineCommand {
         -int row_, splitColumn_
-        -CursorPos before_, after_
         +undo()
         +redo()
     }
@@ -343,14 +296,8 @@ classDiagram
 
     class Selection {
         +bool active
-        +int anchorRow
-        +int anchorCol
-        +int activeRow
-        +int activeCol
-        +clear()
-        +begin(row, col)
-        +moveTo(row, col)
-        +isEmpty() bool
+        +int anchorRow, anchorCol
+        +int activeRow, activeCol
         +normalized(sR, sC, eR, eC)
     }
 
@@ -358,7 +305,6 @@ classDiagram
         -string contents_
         +set(text)
         +contents() string
-        +empty() bool
     }
 
     class DiffEngine {
@@ -370,9 +316,6 @@ classDiagram
     class VersionHistory {
         -Snapshot[] snapshots_
         +recordSnapshot(content)
-        +snapshotCount() size_t
-        +snapshotAt(index) Snapshot
-        +hasHistory() bool
         +diffAgainstLatest(content) DiffLine[]
         +diffBetween(older, newer) DiffLine[]
     }
@@ -405,21 +348,6 @@ classDiagram
         +notifyDirty()
     }
 
-    class Terminal {
-        <<namespace>>
-        +enableRawMode()
-        +disableRawMode()
-        +windowSize(rows, cols) int
-        +clearScreen()
-        +moveCursorTo(row, col)
-    }
-
-    class FrameBuffer {
-        +string data
-        +append(s, len)
-        +appendStr(s)
-    }
-
     class ScreenRenderer {
         <<namespace>>
         +render(editor)
@@ -439,13 +367,11 @@ classDiagram
         -mutex documentMutex_
         -string filename_
         -bool dirty_
-        -uint64_t savedContentHash_
         +run()
         +insertCharacter(c)
         +undo()
         +redo()
         +save()
-        +saveAs()
         +openFile(path)
         +beginSearch()
         +toggleRegexSearch()
@@ -473,33 +399,25 @@ classDiagram
     InsertCharCommand --> TextDocument
     InsertCharCommand --> CursorOwner
     DeleteCharCommand --> TextDocument
-    DeleteCharCommand --> CursorOwner
     MergeLinesCommand --> TextDocument
-    MergeLinesCommand --> CursorOwner
     InsertNewlineCommand --> TextDocument
-    InsertNewlineCommand --> CursorOwner
 
     VersionHistory *-- Snapshot
     VersionHistory ..> DiffEngine : uses
-
     ScreenRenderer ..> TextEditor : reads const ref
-    ScreenRenderer ..> FrameBuffer : builds
     ScreenRenderer ..> SyntaxHighlighter : tokenizes
     InputHandler ..> TextEditor : drives
     RegexEngine ..> TextEditor : used by search
 ```
 
-**Data model — entities and relationships:**
+### Diagram 3 — Data Model (ER)
 
 ```mermaid
+%%{init: {'theme': 'default'}}%%
 erDiagram
     TextEditor {
         int cursorCol
         int cursorRow
-        int screenRows
-        int screenCols
-        int rowOffset
-        int colOffset
         string filename
         bool dirty
         uint64 savedContentHash
@@ -508,7 +426,7 @@ erDiagram
         bool regexSearch
     }
     TextDocument {
-        vector lineStarts
+        size_t[] lineStarts
     }
     PieceTable {
         string originalText
@@ -521,8 +439,8 @@ erDiagram
         size_t length
     }
     UndoRedoStack {
-        vector undoStack
-        vector redoStack
+        EditCommand[] undoStack
+        EditCommand[] redoStack
     }
     EditCommand {
         int row
@@ -530,18 +448,8 @@ erDiagram
         CursorPos before
         CursorPos after
     }
-    Selection {
-        bool active
-        int anchorRow
-        int anchorCol
-        int activeRow
-        int activeCol
-    }
-    Clipboard {
-        string contents
-    }
     VersionHistory {
-        vector snapshots
+        Snapshot[] snapshots
     }
     Snapshot {
         time_t savedAt
@@ -549,14 +457,12 @@ erDiagram
     }
     AutosaveWorker {
         chrono_seconds interval
-        atomic_bool running
-        atomic_bool dirty
+        bool running
+        bool dirty
     }
 
     TextEditor ||--|| TextDocument : "owns"
     TextEditor ||--|| UndoRedoStack : "owns"
-    TextEditor ||--|| Selection : "owns"
-    TextEditor ||--|| Clipboard : "owns"
     TextEditor ||--|| VersionHistory : "owns"
     TextEditor ||--|| AutosaveWorker : "owns"
     TextDocument ||--|| PieceTable : "storage_"
@@ -582,9 +488,10 @@ erDiagram
 | **Shutdown** | `Ctrl+Q` pressed | `QuitPrompt` shown if `dirty_ == true` |
 | | User confirms | `AutosaveWorker::stop()` joins thread; `disableRawMode()` restores `termios`; process exits |
 
-**Editor mode state machine:**
+### Diagram 4 — Editor Mode State Machine
 
 ```mermaid
+%%{init: {'theme': 'default'}}%%
 stateDiagram-v2
     [*] --> Normal : editor.run() starts
 
@@ -659,52 +566,34 @@ public:
 };
 ```
 
-**Insert algorithm:**
+### Diagram 5 — PieceTable Insert Algorithm
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#dbeafe', 'primaryBorderColor': '#3b82f6', 'primaryTextColor': '#1e3a8a', 'lineColor': '#64748b', 'tertiaryColor': '#f0fdf4'}}}%%
 flowchart TD
-    A(["insert(position, text)"]) --> B{"position == size?"}
+    classDef decision  fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef fastpath  fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef midpath   fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef splitpath fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+    classDef final     fill:#f0fdf4,stroke:#16a34a,color:#14532d
+    classDef term      fill:#1e3a8a,stroke:#1e3a8a,color:#ffffff
 
-    B -->|"Yes — append path"| C["appendedText_ += text\nextend last piece length\n1 integer update"]
-    C --> Z(["Done"])
+    A(["insert(position, text)"]):::term --> B{"position == size?"}:::decision
 
-    B -->|"No — mid-document"| D["Walk pieces_ list\naccumulate offset until\nrunning total >= position"]
-    D --> E{"position falls at\na piece boundary?"}
+    B -->|"Yes — O(1) append"| C["appendedText_ += text\nextend last piece length\n1 integer update"]:::fastpath
+    C --> Z(["Done"]):::term
 
-    E -->|"Yes"| F["Insert new Piece into appendedText_\nNo split needed"]
-    E -->|"No — split required"| G["Split target piece P into\nP_left: offset to split\nP_right: split to end"]
-    G --> H["Insert new Piece between\nP_left and P_right"]
+    B -->|"No — mid-document"| D["Walk pieces_ list\naccumulate until offset >= position"]:::midpath
+    D --> E{"Piece boundary?"}:::decision
 
-    F --> I["appendedText_ += text"]
+    E -->|"Yes — no split"| F["Insert new Piece\npointing into appendedText_"]:::midpath
+    E -->|"No — split"| G["Split piece P into\nP_left and P_right"]:::splitpath
+    G --> H["Insert new Piece\nbetween P_left and P_right"]:::splitpath
+
+    F --> I["appendedText_ += text"]:::final
     H --> I
-    I --> J["documentLength_ += text.size()"]
+    I --> J["documentLength_ += text.size()"]:::final
     J --> Z
-```
-
-**Erase algorithm:**
-
-```mermaid
-flowchart TD
-    A(["erase(position, length)"]) --> B["Walk pieces_ to find\nfirst affected piece"]
-    B --> C{"Erase range within\none piece?"}
-
-    C -->|"Yes"| D{"Split the piece?"}
-    D -->|"Erase at start"| E["Adjust piece offset and length"]
-    D -->|"Erase at end"| F["Reduce piece length"]
-    D -->|"Erase in middle"| G["Split piece into two\nwith gap between"]
-
-    C -->|"No — spans multiple"| H["Trim first affected piece"]
-    H --> I["Remove fully-covered middle pieces"]
-    I --> J["Trim last affected piece"]
-
-    E --> K["coalesceAdjacentPieces()"]
-    F --> K
-    G --> K
-    J --> K
-
-    K --> L["Merge adjacent pieces in same buffer"]
-    L --> M["documentLength_ -= length"]
-    M --> Z(["Done"])
 ```
 
 ---
@@ -758,32 +647,6 @@ Row/column abstraction over `PieceTable`. The key contribution: **incremental `l
 | Insert `\n` | O(lines after cursor) |
 | Backspace at column 0 (merge) | O(lines after cursor) |
 | Multi-line paste / cut | O(total lines) — full rescan (rare) |
-
-**Line index update logic:**
-
-```mermaid
-flowchart TD
-    A(["Edit operation"]) --> B{"Kind of edit?"}
-
-    B -->|"insertChar non-newline"| C["PT.insert(toOffset(row,col), c)"]
-    C --> D["shiftLineStartsAfter(row, +1)\nO(lines after cursor)"]
-    D --> Z(["Done"])
-
-    B -->|"insertNewline"| E["PT.insert(toOffset(row,splitCol), newline)"]
-    E --> F["lineStarts_.insert(row+1 entry)"]
-    F --> G["shiftLineStartsAfter(row+1, +1)\nO(lines after cursor)"]
-    G --> Z
-
-    B -->|"mergeWithNextLine\nbackspace at col 0"| H["delta = -(lineLength(row+1)+1)"]
-    H --> I["PT.erase at row+1 start - 1"]
-    I --> J["lineStarts_.erase(row+1 entry)"]
-    J --> K["shiftLineStartsAfter(row, delta)\nO(lines after cursor)"]
-    K --> Z
-
-    B -->|"Multi-line paste or cut"| L["PT.eraseRange or insertAt"]
-    L --> M["Full lineStarts_ rescan\nO(total lines) — rare path"]
-    M --> Z
-```
 
 **Public API:**
 ```cpp
@@ -839,42 +702,6 @@ public:
 | `MergeLinesCommand` | `(row, prevLineLength, before, after)` | Re-split the merged line; restore `before` cursor |
 | `InsertNewlineCommand` | `(row, splitColumn, before, after)` | Merge the two lines back; restore `before` cursor |
 
-**Undo / Redo sequence:**
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant TE as TextEditor
-    participant UR as UndoRedoStack
-    participant CMD as EditCommand subclass
-    participant TD as TextDocument
-    participant CO as CursorOwner
-
-    Note over User,CO: Normal edit — push command
-    User ->> TE: insertCharacter('A')
-    TE ->> TE: create InsertCharCommand(doc, this, row, col, 'A', before, after)
-    TE ->> UR: push(command)
-    UR ->> CMD: redo() — execute the edit
-    CMD ->> TD: insertChar(row, col, 'A')
-    UR ->> UR: undoStack_.push_back(cmd) redoStack_.clear()
-
-    Note over User,CO: Ctrl+Z Undo
-    User ->> TE: undo()
-    TE ->> UR: undo()
-    UR ->> CMD: undo()
-    CMD ->> TD: deleteChar(row, col)
-    CMD ->> CO: setCursor(before.col, before.row)
-    UR ->> UR: redoStack_.push_back(cmd)
-
-    Note over User,CO: Ctrl+Y Redo
-    User ->> TE: redo()
-    TE ->> UR: redo()
-    UR ->> CMD: redo()
-    CMD ->> TD: insertChar(row, col, 'A')
-    CMD ->> CO: setCursor(after.col, after.row)
-    UR ->> UR: undoStack_.push_back(cmd)
-```
-
 ---
 
 ### UndoRedoStack
@@ -915,44 +742,6 @@ struct Selection {
     void normalized(int& startRow, int& startCol,
                     int& endRow,   int& endCol) const;
 };
-```
-
-**Selection copy / cut / paste flow:**
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant IH as InputHandler
-    participant TE as TextEditor
-    participant SEL as Selection
-    participant TD as TextDocument
-    participant CB as Clipboard
-
-    Note over User,CB: Begin selection
-    User ->> IH: Ctrl+Space
-    IH ->> TE: beginSelection()
-    TE ->> SEL: begin(cursorRow_, cursorCol_)
-
-    Note over User,CB: Extend with arrow keys
-    User ->> IH: Arrow keys
-    IH ->> TE: moveCursorRight() etc.
-    TE ->> SEL: moveTo(cursorRow_, cursorCol_)
-
-    Note over User,CB: Copy
-    User ->> IH: Ctrl+C
-    IH ->> TE: copySelectionToClipboard()
-    TE ->> SEL: normalized(startRow, startCol, endRow, endCol)
-    TE ->> TD: toOffset(startRow, startCol)
-    TE ->> TD: toOffset(endRow, endCol)
-    TE ->> TD: textInRange(startOff, endOff)
-    TE ->> CB: set(text)
-    TE ->> SEL: clear()
-
-    Note over User,CB: Paste
-    User ->> IH: Ctrl+V
-    IH ->> TE: pasteFromClipboard()
-    TE ->> CB: contents()
-    TE ->> TD: insertAt(toOffset(cursorRow_, cursorCol_), text)
 ```
 
 ---
@@ -1018,32 +807,6 @@ public:
 };
 ```
 
-**Save and diff flow:**
-
-```mermaid
-flowchart TD
-    A(["Ctrl+S"]) --> B["TextEditor::save()"]
-    B --> C["writeCurrentTextToDisk()"]
-    C --> D["VersionHistory::recordSnapshot(content)"]
-    D --> E["snapshots_.push_back(Snapshot{now, content})"]
-    E --> F["savedContentHash_ = hash(content)"]
-    F --> G["dirty_ = false"]
-
-    H(["Ctrl+D"]) --> I["TextEditor::showVersionHistory()"]
-    I --> J{"hasHistory()?"}
-    J -->|"No"| K["setStatusMessage: no saved version"]
-    J -->|"Yes"| L["currentText = document_.fullText()"]
-    L --> M["diffAgainstLatest(currentText)"]
-    M --> N["DiffEngine::splitIntoLines(oldText)"]
-    N --> O["DiffEngine::splitIntoLines(newText)"]
-    O --> P["Build LCS table dp[n+1][m+1]"]
-    P --> Q["Backtrack: classify each line\nUnchanged / Added / Removed"]
-    Q --> R["Return vector of DiffLine"]
-    R --> S["Display in status area"]
-    K --> S
-    S --> T(["Rendered on next frame"])
-```
-
 ---
 
 ### SyntaxHighlighter
@@ -1078,48 +841,6 @@ public:
 | `Python` | `.py` |
 | `None` | anything else |
 
-**Per-line scan state machine:**
-
-```mermaid
-flowchart TD
-    A(["tokenize(line, lang, inBlockComment)"]) --> B{"lang == None?"}
-
-    B -->|"Yes"| C["Return single Normal token\ncovering entire line"]
-    B -->|"No"| D{"inBlockComment == true?"}
-
-    D -->|"Yes — inside block comment"| E{"Line contains close?"}
-    E -->|"No"| F["Return single Comment token\ninBlockComment stays true"]
-    E -->|"Yes"| G["Emit Comment tokens up to close\nend block comment\ncontinue scan after close"]
-
-    D -->|"No"| H{"First char == hash?"}
-    H -->|"Yes — C/C++ only"| I["Entire line is Preprocessor token"]
-    H -->|"No"| J["Begin left-to-right scan\nO(line length) each char once"]
-
-    J --> K{"Current char"}
-    K -->|"slash"| L{"Next char == star?"}
-    L -->|"Yes"| M["Start Comment token\nset inBlockComment = true\nscan until close or EOL"]
-    L -->|"No"| N{"Next char == slash?"}
-    N -->|"Yes"| O["Rest of line is Comment token"]
-    N -->|"No"| P["Emit Normal token slash"]
-
-    K -->|"quote char"| Q["Scan string literal\nstop at matching close\nEmit String token"]
-    K -->|"digit 0-9"| R["Scan numeric literal\nEmit Number token"]
-    K -->|"letter or underscore"| S["Scan identifier\nlookup in unordered_set O(1)\nEmit Keyword or Normal token"]
-    K -->|"other"| T["Emit single-char Normal token"]
-
-    M --> U{"End of line?"}
-    O --> U
-    P --> U
-    Q --> U
-    R --> U
-    S --> U
-    T --> U
-
-    G --> U
-    U -->|"No"| K
-    U -->|"Yes"| V(["Return tokens covering every character"])
-```
-
 ---
 
 ### RegexEngine
@@ -1149,27 +870,33 @@ public:
 | `^` `$` | Start/end anchors |
 | `\d` `\w` `\s` | Shorthands; `\D \W \S` negated |
 
-**Thompson NFA compile and simulate:**
+### Diagram 6 — Thompson NFA Compile & Simulate
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#ede9fe', 'primaryBorderColor': '#7c3aed', 'primaryTextColor': '#3b0764', 'lineColor': '#64748b', 'tertiaryColor': '#f0fdf4'}}}%%
 flowchart TD
+    classDef input    fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef fragment fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+    classDef decision fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef sim      fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef output   fill:#1e3a8a,stroke:#1e3a8a,color:#ffffff
+
     subgraph compile["Step 1 — Compile Pattern to NFA"]
-        A(["pattern string"]) --> B["Recursive-descent parser"]
-        B --> C{"Next token"}
+        A(["pattern string"]):::input --> B["Recursive-descent parser"]:::input
+        B --> C{"Next token"}:::decision
 
-        C -->|"literal char"| D["cat fragment\nstate match char state"]
-        C -->|"dot"| E["cat fragment\nmatch any non-newline"]
-        C -->|"pipe alternation"| F["alt fragment\ntwo epsilon branches"]
-        C -->|"star"| G["star fragment\nloop or skip via epsilon"]
-        C -->|"plus"| H["plus fragment\none mandatory then loop"]
-        C -->|"question"| I["quest fragment\nmatch or skip via epsilon"]
-        C -->|"open paren"| J["Recurse into sub-expression\nthen apply outer quantifier"]
-        C -->|"bracket class"| K["Build char-set matcher\nfor ranges and negations"]
-        C -->|"backslash escape"| L["Map to char-set\nd=digit w=word s=space"]
-        C -->|"caret anchor"| M["anchor_start flag"]
-        C -->|"dollar anchor"| N["anchor_end flag"]
+        C -->|"literal char"| D["cat fragment\nstate → match char → state"]:::fragment
+        C -->|"dot"| E["cat fragment\nmatch any non-newline"]:::fragment
+        C -->|"pipe"| F["alt fragment\ntwo epsilon branches"]:::fragment
+        C -->|"star"| G["star fragment\nloop or skip via epsilon"]:::fragment
+        C -->|"plus"| H["plus fragment\none mandatory then loop"]:::fragment
+        C -->|"question"| I["quest fragment\nmatch or skip via epsilon"]:::fragment
+        C -->|"open paren"| J["Recurse into sub-expression\nthen apply outer quantifier"]:::fragment
+        C -->|"bracket class"| K["Build char-set matcher\nfor ranges and negations"]:::fragment
+        C -->|"backslash"| L["Map shorthand\nd=digit w=word s=space"]:::fragment
+        C -->|"anchor"| M["anchor_start or anchor_end flag"]:::fragment
 
-        D --> O["Assembled NFA via epsilon transitions"]
+        D --> O["Assembled NFA\nglued with epsilon transitions"]:::sim
         E --> O
         F --> O
         G --> O
@@ -1179,23 +906,22 @@ flowchart TD
         K --> O
         L --> O
         M --> O
-        N --> O
     end
 
     subgraph simulate["Step 2 — Simulate NFA"]
-        O --> P(["text string"])
-        P --> Q["Compute initial epsilon-closure\nof NFA start state"]
-        Q --> R["current_states = closure(start)"]
+        O --> P(["text string"]):::input
+        P --> Q["Compute epsilon-closure\nof NFA start state"]:::sim
+        Q --> R["current_states = closure(start)"]:::sim
 
-        R --> S{"For each char in text"}
-        S --> T["For each state in current_states\nthat matches char: add successor"]
-        T --> U["epsilon-closure of next_states"]
-        U --> V{"Accept state in current_states?"}
-        V -->|"Yes"| W["Record match col and length"]
-        V -->|"No"| X["Continue"]
+        R --> S{"For each char in text"}:::decision
+        S --> T["Advance: match char in\ncurrent_states → next_states"]:::sim
+        T --> U["epsilon-closure of next_states"]:::sim
+        U --> V{"Accept state reached?"}:::decision
+        V -->|"Yes"| W["Record match\ncol and length"]:::sim
+        V -->|"No"| X["Continue"]:::sim
         W --> X
         X --> S
-        S -->|"End of text"| Y(["Return vector of Match"])
+        S -->|"End of text"| Y(["Return vector of Match"]):::output
     end
 ```
 
@@ -1232,52 +958,20 @@ AutosaveWorker(std::mutex& documentMutex,
                std::chrono::seconds interval = std::chrono::seconds(10));
 ```
 
-**Thread lifecycle:**
+### Diagram 7 — Autosave Concurrency
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Constructed : AutosaveWorker constructor
-
-    Constructed --> Running : start()
-    Running --> Sleeping : wait_for(wakeSignal_, interval)
-
-    Sleeping --> WokenTimer : 30s timeout elapsed
-    Sleeping --> WokenNotify : notifyDirty() called from main thread
-
-    WokenTimer --> CheckDirty
-    WokenNotify --> CheckDirty
-
-    CheckDirty --> Sleeping : dirty_.exchange(false) == false
-    CheckDirty --> LockAndSnapshot : dirty_.exchange(false) == true
-
-    LockAndSnapshot --> CopyText : lock_guard acquire documentMutex_
-    CopyText --> UnlockAndWrite : snapshotProvider() called text copied lock released
-
-    UnlockAndWrite --> WriteSuccess : diskWriter returns true
-    UnlockAndWrite --> WriteFailed : diskWriter returns false
-
-    WriteSuccess --> Notify : onSaved_ callback
-    WriteFailed --> Sleeping : retry next wake
-
-    Notify --> Sleeping : callback complete
-
-    Running --> Stopped : stop() running_.store(false) thread.join()
-    Stopped --> [*]
-```
-
-**Autosave concurrency sequence:**
-
-```mermaid
+%%{init: {'theme': 'default'}}%%
 sequenceDiagram
-    participant MT as "Main Thread (typing)"
+    participant MT as Main Thread (typing)
     participant MX as documentMutex_
-    participant AW as "AutosaveWorker thread"
+    participant AW as AutosaveWorker thread
     participant FS as Filesystem
 
     Note over MT,AW: Two threads — one shared mutex
 
     MT ->> MT: insertCharacter(c) — no lock needed
-    MT ->> AW: notifyDirty() — atomic store; free
+    MT ->> AW: notifyDirty() — atomic store; near-zero cost
 
     loop worker wake cycle
         AW ->> AW: wait_for(wakeSignal_, 30s)
@@ -1287,7 +981,7 @@ sequenceDiagram
         MT -->> AW: string snapshot
         AW ->> MX: lock_guard release
         Note over MX: Lock released BEFORE slow I/O
-        AW ->> FS: diskWriter(snapshot) writes .bak
+        AW ->> FS: diskWriter(snapshot) — writes .bak
         FS -->> AW: success
         AW ->> AW: onSaved_ callback
     end
@@ -1332,36 +1026,44 @@ namespace ScreenRenderer {
 }
 ```
 
-**Frame rendering pipeline:**
+### Diagram 8 — ScreenRenderer Frame Pipeline
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#f0fdf4', 'primaryBorderColor': '#16a34a', 'primaryTextColor': '#14532d', 'lineColor': '#64748b', 'tertiaryColor': '#dbeafe'}}}%%
 flowchart TD
-    A(["render(const TextEditor&)"]) --> B["Create empty FrameBuffer"]
-    B --> C["Hide cursor ESC 25l"]
-    C --> D["Move to home ESC H"]
-    D --> E["Pre-scan rows ABOVE viewport\ncompute inBlockComment\nfor first visible row"]
+    classDef setup    fill:#dbeafe,stroke:#3b82f6,color:#1e3a8a
+    classDef loop     fill:#f0fdf4,stroke:#16a34a,color:#14532d
+    classDef token    fill:#ede9fe,stroke:#7c3aed,color:#3b0764
+    classDef decision fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef flush    fill:#1e3a8a,stroke:#1e3a8a,color:#ffffff
+    classDef term     fill:#374151,stroke:#374151,color:#ffffff
 
-    E --> F{"For each visible row"}
-    F --> G["lineText = editor.lineText(rowOffset + row)"]
-    G --> H["tokens = SyntaxHighlighter::tokenize(line, lang, inBlockComment)"]
-    H --> I{"For each SyntaxToken"}
-    I --> J["Append ANSI color for token.type"]
-    J --> K["Append token text substring"]
-    K --> L["Append ANSI reset"]
+    A(["render(const TextEditor&)"]):::term --> B["Create empty FrameBuffer"]:::setup
+    B --> C["Hide cursor\nESC[?25l"]:::setup
+    C --> D["Move to home\nESC[H"]:::setup
+    D --> E["Pre-scan rows above viewport\nto determine inBlockComment\nfor first visible row"]:::setup
+
+    E --> F{"For each visible row\n0 to screenRows_"}:::decision
+    F --> G["lineText = editor.lineText(row)"]:::loop
+    G --> H["SyntaxHighlighter::tokenize(line, lang, inBlockComment)"]:::loop
+    H --> I{"For each SyntaxToken"}:::decision
+    I --> J["Append ANSI color code"]:::token
+    J --> K["Append token text"]:::token
+    K --> L["Append ANSI reset"]:::token
     L --> I
-    I -->|"All tokens done"| M["Append CRLF clear to EOL"]
+    I -->|"All tokens done"| M["Append CRLF · clear to EOL"]:::loop
     M --> F
 
-    F -->|"All rows done"| N["Render status bar\nfilename  dirty+  row:col  mode"]
-    N --> O{"isSearchActive?"}
-    O -->|"Yes"| P["Render search bar with query"]
-    O -->|"No"| Q["Skip"]
+    F -->|"All rows done"| N["Render status bar\nfilename · dirty[+] · row:col · mode"]:::setup
+    N --> O{"Search active?"}:::decision
+    O -->|"Yes"| P["Render search bar with query"]:::setup
+    O -->|"No"| Q["Skip"]:::setup
     P --> Q
 
-    Q --> R["Show cursor ESC 25h"]
-    R --> S["Position cursor ESC row;col H"]
-    S --> T["write(STDOUT_FILENO, framebuffer.data)\nSingle syscall — no flicker"]
-    T --> Z(["Done"])
+    Q --> R["Show cursor\nESC[?25h"]:::flush
+    R --> S["Position cursor\nESC[row;colH"]:::flush
+    S --> T["write(STDOUT_FILENO, framebuffer)\nSingle syscall — no flicker"]:::flush
+    T --> Z(["Done"]):::term
 ```
 
 ---
@@ -1385,129 +1087,6 @@ namespace InputHandler {
 `include/TextEditor.hpp` · `src/TextEditor.cpp`
 
 The orchestrator. Implements `CursorOwner`. Does not know how to draw or decode a keypress.
-
-**Keystroke processing loop:**
-
-```mermaid
-sequenceDiagram
-    participant OS as "OS / stdin"
-    participant IH as InputHandler
-    participant TE as TextEditor
-    participant UR as UndoRedoStack
-    participant TD as TextDocument
-    participant PT as PieceTable
-    participant SR as ScreenRenderer
-    participant FB as FrameBuffer
-    participant AW as AutosaveWorker
-
-    loop editor.run() — one iteration per keypress
-        TE ->> SR: render(editor)
-        SR ->> FB: accumulate ANSI frame
-        FB -->> OS: write() single syscall
-
-        OS -->> IH: processNextKeypress(editor)
-        IH ->> IH: read raw byte from stdin
-        IH ->> TE: insertCharacter(c)
-
-        TE ->> UR: push(InsertCharCommand)
-        UR ->> TD: insertChar(row, col, c)
-        TD ->> PT: insert(offset, c)
-        PT ->> PT: appendAndTrackPiece(c)
-        PT ->> PT: extend last piece length
-        TD ->> TD: shiftLineStartsAfter(row, +1)
-
-        TE ->> AW: notifyDirty()
-        Note over AW: atomic dirty_.store(true) wakeSignal_.notify_one()
-    end
-```
-
-**File open / save / save-as sequence:**
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant IH as InputHandler
-    participant TE as TextEditor
-    participant TD as TextDocument
-    participant PT as PieceTable
-    participant VH as VersionHistory
-    participant AW as AutosaveWorker
-    participant FS as Filesystem
-
-    Note over User,FS: Opening a file
-    TE ->> TD: loadFromFile(path)
-    TD ->> PT: loadFromFile(path)
-    PT ->> FS: read file into originalText_
-    FS -->> PT: file content
-    PT ->> PT: reset to single spanning Piece
-    TD ->> TD: rebuild lineStarts_ full scan once
-    TE ->> TE: savedContentHash_ = hash(content)
-    TE ->> AW: start()
-
-    Note over User,FS: Ctrl+S Save
-    User ->> IH: Ctrl+S
-    IH ->> TE: save()
-    TE ->> FS: writeCurrentTextToDisk()
-    FS -->> TE: success
-    TE ->> VH: recordSnapshot(content)
-    VH ->> VH: snapshots_.push_back(Snapshot)
-    TE ->> TE: savedContentHash_ = hash(content)
-    TE ->> TE: dirty_ = false
-
-    Note over User,FS: Ctrl+A Save-As
-    User ->> IH: Ctrl+A
-    IH ->> TE: saveAs()
-    TE ->> TE: promptUser("Save as:")
-    TE -->> User: inline terminal prompt
-    User -->> TE: new filename
-    TE ->> TE: filename_ = new filename
-    TE ->> TE: save()
-```
-
-**Search flow (literal and regex):**
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant IH as InputHandler
-    participant TE as TextEditor
-    participant RE as RegexEngine
-    participant TD as TextDocument
-
-    User ->> IH: Ctrl+F
-    IH ->> TE: beginSearch()
-    TE ->> TE: searchActive_ = true
-
-    loop each character typed in search bar
-        User ->> IH: char c
-        IH ->> TE: searchQuery_ += c
-        TE ->> TE: refreshMatches()
-
-        alt regexSearch_ == false
-            TE ->> TD: lineText(row) for each row
-            TD -->> TE: line string
-            TE ->> TE: string::find(query) push MatchPosition
-        else regexSearch_ == true
-            TE ->> TD: lineText(row) for each row
-            TD -->> TE: line string
-            TE ->> RE: findAll(searchQuery_, line)
-            RE ->> RE: compile pattern to NFA
-            RE ->> RE: simulate epsilon-closure sets
-            RE -->> TE: vector of Match col and length
-            TE ->> TE: push MatchPosition row col len
-        end
-    end
-
-    User ->> IH: Ctrl+N
-    IH ->> TE: findNext()
-    TE ->> TE: currentMatchIndex_++
-    TE ->> TE: scrollViewportToCursor()
-
-    User ->> IH: Ctrl+R
-    IH ->> TE: toggleRegexSearch()
-    TE ->> TE: regexSearch_ = not regexSearch_
-    TE ->> TE: refreshMatches()
-```
 
 **Public API summary:**
 ```cpp
@@ -1559,24 +1138,6 @@ void setCursor(int col, int row) override;
 | **Piece Table** ✅ | O(1) amortized append; O(k) mid-doc | Low | Two buffers + piece list |
 | Gap Buffer | O(k) at gap; O(n) to reposition | Contiguous | Fast sequential; slow random |
 | Rope | O(log n) all ops | Tree nodes | Complex; justified at gigabyte scale only |
-
-**Trade-off positioning:**
-
-```mermaid
-quadrantChart
-    title Text Storage Structure Trade-offs
-    x-axis Sequential edit speed low to high
-    y-axis Random position edit speed low to high
-    quadrant-1 Fast both ways
-    quadrant-2 Fast random slow sequential
-    quadrant-3 Slow both ways
-    quadrant-4 Fast sequential slow random
-    std string: [0.10, 0.10]
-    Linked list: [0.15, 0.80]
-    Piece Table chosen: [0.90, 0.35]
-    Gap Buffer comparator: [0.85, 0.20]
-    Rope: [0.60, 0.90]
-```
 
 For sequential typing (dominant workload) Piece Table wins. No text is ever copied or moved on append — one integer update. `coalesceAdjacentPieces()` after each erase prevents unbounded piece-list growth.
 
@@ -1646,13 +1207,14 @@ The critical invariant: `documentMutex_` is held **only** long enough to call `s
 
 ### Unit Tests — 50 / 50 Passing
 
-**Test distribution by subsystem:**
+### Diagram 9 — Test Distribution
 
 ```mermaid
+%%{init: {'theme': 'default'}}%%
 pie title "50 Unit Tests by Subsystem"
     "RegexEngine Thompson NFA" : 15
-    "SyntaxHighlighter" : 9
     "GapBuffer" : 10
+    "SyntaxHighlighter" : 9
     "TextDocument" : 5
     "DiffEngine and VersionHistory" : 4
     "TextEditor undo redo search" : 3
@@ -1756,9 +1318,12 @@ pie title "50 Unit Tests by Subsystem"
 
 **Setup:** N=50,000 operations each · WSL2 · `g++ -O2` · `std::chrono::high_resolution_clock`. Winner declared when ≥10% faster.
 
+### Diagram 10 — Benchmark Results
+
 ```mermaid
+%%{init: {'theme': 'default'}}%%
 xychart-beta
-    title "PieceTable vs GapBuffer Benchmark (ms) — N=50,000 ops"
+    title "PieceTable vs GapBuffer — N=50,000 ops (ms)"
     x-axis ["A: Sequential append", "B: Random mid insert", "C: Sequential erase", "D: Ping-pong"]
     y-axis "Time (ms)" 0 --> 3000
     bar [2.38, 2933, 2.56, 856]
@@ -1818,26 +1383,12 @@ make debug         # build with ASan + UBSan
 make clean
 ```
 
-**Makefile targets:**
-
-```mermaid
-flowchart TD
-    A(["make all"]) --> B["Compile 14 src/*.cpp + main.cpp\nusing -Wall -Wextra -std=c++17 -Iinclude -pthread"]
-    B --> C["Link OBJ + MAIN_OBJ -o editor"]
-    C --> D(["editor binary"])
-
-    F(["make debug"]) --> G["CXXFLAGS += -g -O0\n-fsanitize=address,undefined\n-fno-omit-frame-pointer"]
-    G --> H["make clean"]
-    H --> A
-
-    I(["make test"]) --> J["Compile tests/tests.cpp + OBJ\n-o tests/run_tests"]
-    J --> K["./tests/run_tests"]
-    K --> L["50 unit tests across all subsystems"]
-    L --> M["4-scenario benchmark\nPieceTable vs GapBuffer\nN=50,000 ops each"]
-    M --> N(["All 50/50 tests passed!"])
-
-    O(["make clean"]) --> P["rm -f src/*.o editor tests/run_tests"]
-```
+| Target | Effect |
+|---|---|
+| `make` / `make all` | Compile 14 modules + `main.cpp`, link `editor` binary |
+| `make debug` | Rebuild with `-g -O0 -fsanitize=address,undefined` |
+| `make test` | Compile `tests/tests.cpp`, run 50 unit tests + benchmarks |
+| `make clean` | Remove `src/*.o`, `editor`, `tests/run_tests` |
 
 ---
 
@@ -1870,43 +1421,6 @@ Both are especially valuable for `PieceTable` manual offset arithmetic, `RegexEn
 | [CITATION.cff](CITATION.cff) | CFF 1.2.0 citation metadata |
 
 GitHub issue templates: [Bug Report](.github/ISSUE_TEMPLATE/bug_report.md) · [Feature Request](.github/ISSUE_TEMPLATE/feature_request.md) · [Pull Request Template](.github/PULL_REQUEST_TEMPLATE.md)
-
-**Branching strategy:**
-
-```mermaid
-gitGraph
-    commit id: "v1.0.0 initial release" tag: "v1.0.0"
-
-    branch feat/os-clipboard
-    checkout feat/os-clipboard
-    commit id: "Add Clipboard setFromOS xclip"
-    commit id: "Add Clipboard getFromOS pbcopy"
-    checkout main
-    merge feat/os-clipboard id: "feat: OS clipboard integration"
-
-    branch fix/piece-table-coalesce
-    checkout fix/piece-table-coalesce
-    commit id: "Fix coalesce skipping first piece"
-    checkout main
-    merge fix/piece-table-coalesce id: "fix: coalesce boundary off-by-one"
-
-    branch feat/mouse-support
-    checkout feat/mouse-support
-    commit id: "Terminal enable mouse reporting"
-    commit id: "InputHandler parse mouse event bytes"
-    commit id: "TextEditor moveCursorToMouse"
-    checkout main
-    merge feat/mouse-support id: "feat: click-to-move cursor"
-
-    branch perf/frame-diff
-    checkout perf/frame-diff
-    commit id: "FrameBuffer store prev frame"
-    commit id: "ScreenRenderer emit only changed cells"
-    checkout main
-    merge perf/frame-diff id: "perf: differential frame rendering"
-
-    commit id: "chore: update CHANGELOG for v1.1.0" tag: "v1.1.0"
-```
 
 ---
 

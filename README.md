@@ -63,70 +63,43 @@ Every component was engineered deliberately: algorithmic trade-offs are document
 **Project overview — all subsystems at a glance:**
 
 ```mermaid
-mindmap
-  root((PieceTable Editor))
-    Text Storage
-      PieceTable
-        originalText buffer
-        appendedText buffer
-        Piece list
-        coalesceAdjacentPieces
-      GapBuffer
-        Contiguous array
-        Movable gap
-        4 KB default gap
-    Document Layer
-      TextDocument
-        lineStarts_ vector
-        Incremental index
-        Offset-based range API
-    Editing
-      EditCommand
-        InsertCharCommand
-        DeleteCharCommand
-        MergeLinesCommand
-        InsertNewlineCommand
-      UndoRedoStack
-        undo stack
-        redo stack
-    Search
-      Literal incremental search
-      Regex engine
-        Thompson NFA
-        Epsilon-closure simulation
-    Syntax Highlighting
-      C and Cpp tokenizer
-      Python tokenizer
-      Stateless per-line API
-    Rendering
-      ScreenRenderer
-        FrameBuffer
-        Single write syscall
-      Terminal
-        POSIX raw mode
-        SIGWINCH handler
-    Selection and Clipboard
-      Selection value type
-        anchor point
-        active point
-        normalized helper
-      Clipboard
-        In-process single slot
-    Version History
-      VersionHistory
-        Full-text snapshots
-        savedAt timestamp
-      DiffEngine
-        LCS dynamic program
-    Concurrency
-      AutosaveWorker
-        std::thread
-        condition_variable
-        atomic dirty flag
-    Testing
-      50 unit tests
-      4-scenario benchmark
-      ASan and UBSan
+flowchart LR
+    subgraph storage["Text Storage"]
+        PT["PieceTable\noriginalText + appendedText\nPiece list + coalesce"]
+        GB["GapBuffer\nContiguous array\nMovable gap · 4 KB default"]
+    end
+    subgraph document["Document Layer"]
+        TD["TextDocument\nlineStarts_ vector\nIncremental index\nOffset-based range API"]
+    end
+    subgraph editing["Editing"]
+        EC["EditCommand\nInsert · Delete · Merge · Newline"]
+        UR["UndoRedoStack\nundo stack · redo stack"]
+    end
+    subgraph search["Search"]
+        LS["Literal incremental search"]
+        RE["RegexEngine\nThompson NFA\nEpsilon-closure simulation"]
+    end
+    subgraph highlight["Syntax Highlighting"]
+        SH["SyntaxHighlighter\nC/C++ · Python\nStateless per-line API"]
+    end
+    subgraph rendering["Rendering"]
+        SR["ScreenRenderer\nFrameBuffer\nSingle write syscall"]
+        TN["Terminal\nPOSIX raw mode · SIGWINCH"]
+    end
+    subgraph selection["Selection and Clipboard"]
+        SEL["Selection\nanchor · active · normalized"]
+        CB["Clipboard\nIn-process single slot"]
+    end
+    subgraph history["Version History"]
+        VH["VersionHistory\nFull-text snapshots · savedAt"]
+        DE["DiffEngine\nLCS dynamic program"]
+    end
+    subgraph concurrency["Concurrency"]
+        AW["AutosaveWorker\nstd::thread\ncondition_variable\natomic dirty flag"]
+    end
+    subgraph testing["Testing"]
+        TS["50 unit tests\n4-scenario benchmark\nASan + UBSan"]
+    end
 ```
 
 ---
@@ -272,7 +245,7 @@ classDiagram
     class PieceTable {
         -string originalText_
         -string appendedText_
-        -vector~Piece~ pieces_
+        -Piece[] pieces_
         -size_t documentLength_
         +loadFromFile(path)
         +insert(position, text)
@@ -292,7 +265,7 @@ classDiagram
     }
 
     class GapBuffer {
-        -vector~char~ buf_
+        -char[] buf_
         -size_t gapStart_
         -size_t gapEnd_
         +insert(position, text)
@@ -306,7 +279,7 @@ classDiagram
 
     class TextDocument {
         -PieceTable storage_
-        -vector~size_t~ lineStarts_
+        -size_t[] lineStarts_
         +lineCount() int
         +lineText(row) string
         +lineLength(row) int
@@ -359,8 +332,8 @@ classDiagram
     }
 
     class UndoRedoStack {
-        -vector~EditCommand~ undoStack_
-        -vector~EditCommand~ redoStack_
+        -EditCommand[] undoStack_
+        -EditCommand[] redoStack_
         +push(command)
         +undo()
         +redo()
@@ -390,18 +363,18 @@ classDiagram
 
     class DiffEngine {
         <<static>>
-        +diffLines(old, new) vector~DiffLine~
-        +splitIntoLines(text) vector~string~
+        +diffLines(old, new) DiffLine[]
+        +splitIntoLines(text) string[]
     }
 
     class VersionHistory {
-        -vector~Snapshot~ snapshots_
+        -Snapshot[] snapshots_
         +recordSnapshot(content)
         +snapshotCount() size_t
         +snapshotAt(index) Snapshot
         +hasHistory() bool
-        +diffAgainstLatest(content) vector~DiffLine~
-        +diffBetween(older, newer) vector~DiffLine~
+        +diffAgainstLatest(content) DiffLine[]
+        +diffBetween(older, newer) DiffLine[]
     }
 
     class Snapshot {
@@ -412,20 +385,20 @@ classDiagram
     class SyntaxHighlighter {
         <<static>>
         +fromFilename(name) Language
-        +tokenize(line, lang, inBlock) vector~SyntaxToken~
+        +tokenize(line, lang, inBlock) SyntaxToken[]
         +ansiColor(type) char*
     }
 
     class RegexEngine {
         <<static>>
-        +findAll(pattern, text) vector~Match~
+        +findAll(pattern, text) Match[]
         +isValid(pattern) bool
     }
 
     class AutosaveWorker {
         -thread worker_
-        -atomic~bool~ running_
-        -atomic~bool~ dirty_
+        -bool running_
+        -bool dirty_
         -condition_variable wakeSignal_
         +start()
         +stop()
@@ -594,46 +567,20 @@ erDiagram
 
 **Editor lifecycle — from launch to quit:**
 
-```mermaid
-timeline
-    title PieceTable Editor Lifecycle
-
-    section Startup
-        Terminal raw mode enabled   : enableRawMode saves termios
-                                    : SIGWINCH handler registered
-        File opened                 : PieceTable loads originalText_
-                                    : lineStarts_ built by full scan once
-                                    : savedContentHash_ computed
-        AutosaveWorker started      : std::thread launched
-                                    : condition_variable initialized
-                                    : 30-second timer begins
-
-    section Interactive Editing
-        First frame rendered        : ScreenRenderer builds FrameBuffer
-                                    : single write() syscall flushes frame
-        Character typed             : InputHandler reads raw byte
-                                    : InsertCharCommand pushed to UndoStack
-                                    : lineStarts_ shifted O(lines after cursor)
-                                    : notifyDirty flips atomic flag
-        Ctrl+S Save                 : file written to disk
-                                    : Snapshot savedAt content recorded
-                                    : savedContentHash_ updated
-        Autosave fires              : worker wakes after 30s
-                                    : mutex locked; text copied; mutex released
-                                    : .bak written after mutex release
-        Ctrl+Z Undo                 : EditCommand::undo() reverses edit
-                                    : cursor restored to CursorPos before_
-        Ctrl+F Search               : refreshMatches() per keystroke
-                                    : RegexEngine::findAll() if regex mode
-        Ctrl+D Diff                 : DiffEngine::diffLines() over saved snapshot
-                                    : LCS DP O(n times m) over line vectors
-
-    section Shutdown
-        Ctrl+Q pressed              : QuitPrompt if dirty_ is true
-        User confirms               : AutosaveWorker::stop() joins thread
-                                    : disableRawMode() restores termios
-                                    : process exits
-```
+| Phase | Event | Details |
+|---|---|---|
+| **Startup** | Terminal raw mode enabled | `enableRawMode()` saves `termios`; `SIGWINCH` handler registered |
+| | File opened | `PieceTable` loads `originalText_`; `lineStarts_` built by full scan (once); `savedContentHash_` computed |
+| | AutosaveWorker started | `std::thread` launched; `condition_variable` initialized; 30-second timer begins |
+| **Interactive Editing** | First frame rendered | `ScreenRenderer` builds `FrameBuffer`; single `write()` syscall flushes frame |
+| | Character typed | `InputHandler` reads raw byte; `InsertCharCommand` pushed to undo stack; `lineStarts_` shifted O(lines after cursor); `notifyDirty()` flips atomic flag |
+| | `Ctrl+S` Save | File written to disk; `Snapshot{savedAt, content}` recorded; `savedContentHash_` updated |
+| | Autosave fires | Worker wakes after 30 s; mutex locked → text copied → mutex released; `.bak` written **after** mutex release |
+| | `Ctrl+Z` Undo | `EditCommand::undo()` reverses edit; cursor restored to `CursorPos before_` |
+| | `Ctrl+F` Search | `refreshMatches()` called per keystroke; `RegexEngine::findAll()` if regex mode |
+| | `Ctrl+D` Diff | `DiffEngine::diffLines()` over saved snapshot; LCS DP O(n×m) over line vectors |
+| **Shutdown** | `Ctrl+Q` pressed | `QuitPrompt` shown if `dirty_ == true` |
+| | User confirms | `AutosaveWorker::stop()` joins thread; `disableRawMode()` restores `termios`; process exits |
 
 **Editor mode state machine:**
 
@@ -901,7 +848,7 @@ sequenceDiagram
     participant UR as UndoRedoStack
     participant CMD as EditCommand subclass
     participant TD as TextDocument
-    participant CO as "CursorOwner (TextEditor)"
+    participant CO as CursorOwner
 
     Note over User,CO: Normal edit — push command
     User ->> TE: insertCharacter('A')

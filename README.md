@@ -971,7 +971,7 @@ sequenceDiagram
     Note over MT,AW: Two threads — one shared mutex
 
     MT ->> MT: insertCharacter(c) — no lock needed
-    MT ->> AW: notifyDirty() — atomic store; near-zero cost
+    MT ->> AW: notifyDirty() — atomic store, near-zero cost
 
     loop worker wake cycle
         AW ->> AW: wait_for(wakeSignal_, 30s)
@@ -1426,21 +1426,56 @@ GitHub issue templates: [Bug Report](.github/ISSUE_TEMPLATE/bug_report.md) · [F
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for a full history of changes.
+All notable changes to this project are documented in [CHANGELOG.md](CHANGELOG.md), following the [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) format and [Semantic Versioning](https://semver.org/).
 
 ---
 
 ## Citation
 
-```
-Eriyasamy, P. (2025). PieceTable Editor — A High-Performance C++ Terminal Editor.
-https://github.com/PRADEEPERIYASAMY/piecetable-editor
+If you use this project in academic work, please cite it as:
+
+```bibtex
+@software{eriyasamy2025piecetable,
+  author    = {Eriyasamy, Pradeep},
+  title     = {PieceTable Editor — A High-Performance C++ Terminal Editor},
+  year      = {2025},
+  url       = {https://github.com/PRADEEPERIYASAMY/piecetable-editor},
+  license   = {MIT}
+}
 ```
 
-See [CITATION.cff](CITATION.cff) for full CFF 1.2.0 metadata.
+Full machine-readable metadata is available in [CITATION.cff](CITATION.cff) (CFF 1.2.0).
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for the full text.
+Distributed under the **MIT License**. See [LICENSE](LICENSE) for the full text.
+
+You are free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of this software, provided the original copyright notice and permission notice appear in all copies.
+
+---
+
+## Security
+
+To report a vulnerability privately, please use [GitHub Security Advisories](https://github.com/PRADEEPERIYASAMY/piecetable-editor/security/advisories/new). See [SECURITY.md](SECURITY.md) for the full disclosure policy.
+
+---
+
+## Support
+
+For questions and build help, see [SUPPORT.md](SUPPORT.md) or open a [GitHub Discussion](https://github.com/PRADEEPERIYASAMY/piecetable-editor/discussions).
+
+---
+
+<div align="center">
+
+**Made with ❤️ by [Pradeep Eriyasamy](https://github.com/PRADEEPERIYASAMY)**
+
+*Built from scratch · No dependencies · Pure C++17*
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![C++ Standard](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+</div>

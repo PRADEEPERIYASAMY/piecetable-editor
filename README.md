@@ -1470,7 +1470,7 @@ For questions and build help, see [SUPPORT.md](SUPPORT.md) or open a [GitHub Dis
 
 <div align="center">
 
-**Made with ❤️ by [Pradeep Eriyasamy](https://github.com/PRADEEPERIYASAMY)**
+**Made with ❤️ by [Pradeep Periyasamy](https://github.com/PRADEEPERIYASAMY)**
 
 *Built from scratch · No dependencies · Pure C++17*
 
